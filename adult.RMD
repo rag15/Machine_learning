@@ -1,0 +1,314 @@
+---
+title: "adult income"
+author: "raghu"
+date: "7 July 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#data
+```{r}
+library(dplyr)
+library(rattle)
+library(randomForest)
+library(caret)
+library(ROCR)
+library(data.table)
+library(ggplot2)
+library(plyr)
+```
+
+```{r}
+adult <- fread("adult.csv")
+
+colnames(adult)
+
+```
+#EDA feature selection
+```{r}
+adult$education <- NA
+adult$fnlwgt <- NA
+adult$relationship <- NA 
+
+
+```
+#
+```{r}
+# histogram of age by income group
+ggplot(adult) + aes(x=as.numeric(age), group=income, fill=income) + 
+  geom_histogram(binwidth=1, color='black')
+```
+
+```{r}
+# histogram of age by gender group
+ggplot(adult) + aes(x=as.numeric(age), group=sex, fill=sex) + 
+  geom_histogram(binwidth=1, color='black')
+```
+#
+```{r}
+adult$workclass <- as.factor(adult$workclass)
+levels(adult$workclass)[1] <- 'Unknown'
+# combine into Government job
+adult$workclass <- gsub('^Federal-gov', 'Government', adult$workclass)
+adult$workclass <- gsub('^Local-gov', 'Government', adult$workclass)
+adult$workclass <- gsub('^State-gov', 'Government', adult$workclass) 
+
+# combine into Sele-Employed job
+adult$workclass <- gsub('^Self-emp-inc', 'Self-Employed', adult$workclass)
+adult$workclass <- gsub('^Self-emp-not-inc', 'Self-Employed', adult$workclass)
+
+# combine into Other/Unknown
+adult$workclass <- gsub('^Never-worked', 'Other', adult$workclass)
+adult$workclass <- gsub('^Without-pay', 'Other', adult$workclass)
+adult$workclass <- gsub('^Other', 'Other/Unknown', adult$workclass)
+adult$workclass <- gsub('^Unknown', 'Other/Unknown', adult$workclass)
+
+adult$workclass <- as.factor(adult$workclass)
+
+
+```
+
+```{r}
+# barplot of job type by income group
+# get the counts by industry and income group
+count <- table(adult[adult$workclass == 'Government',]$income)["<=50K"]
+count <- c(count, table(adult[adult$workclass == 'Government',]$income)[">50K"])
+count <- c(count, table(adult[adult$workclass == 'Other/Unknown',]$income)["<=50K"])
+count <- c(count, table(adult[adult$workclass == 'Other/Unknown',]$income)[">50K"])
+count <- c(count, table(adult[adult$workclass == 'Private',]$income)["<=50K"])
+count <- c(count, table(adult[adult$workclass == 'Private',]$income)[">50K"])
+count <- c(count, table(adult[adult$workclass == 'Self-Employed',]$income)["<=50K"])
+count <- c(count, table(adult[adult$workclass == 'Self-Employed',]$income)[">50K"])
+count <- as.numeric(count)
+
+# create a dataframe
+
+industry <- rep(levels(adult$workclass), each = 2)
+income <- rep(c('<=50K', '>50K'), 4)
+df <- data.frame(industry, income, count)
+nrow(adult)
+
+
+
+```
+
+```{r}
+df <- ddply(df, .(industry), transform, percent = count/sum(count) * 100)
+
+# format the labels and calculate their positions
+df <- ddply(df, .(industry), transform, pos = (cumsum(count) - 0.5 * count))
+df$label <- paste0(sprintf("%.0f", df$percent), "%")
+
+
+# bar plot of counts by industry with in group proportions 
+ggplot(df, aes(x = industry, y = count, fill = income)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(y = pos, label = label), size = 2) + 
+  ggtitle('Income by Industry')
+```
+```{r}
+# create a dataframe
+df1 <- data.frame(table(adult$income,adult$education.num))
+names(df1) <- c('income', 'education_num', 'count')
+df1
+
+```
+
+```{r}
+# calculate the percentages
+df1 <- ddply(df1, .(education_num), transform, percent = count/sum(count) * 100)
+
+# format the labels and calculate their positions
+df1 <- ddply(df1, .(education_num), transform, pos = (cumsum(count) - 0.5 * count))
+df1$label <- paste0(sprintf("%.0f", df1$percent), "%")
+
+# remove some in group percentage to avoid overlapped text
+df1$label[which(df1$percent < 5)] <- NA
+
+# bar plot of counts by years of education with in group proportions 
+ggplot(df1, aes(x = education_num, y = count, fill = income)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(y = pos, label = label), size = 2) + 
+  ggtitle('Income Level with Years of Education')
+```
+
+```{r}
+adult$occupation <- as.factor(adult$occupation)
+levels(adult$occupation)[1] <- 'Unknown'
+adult$occupation <- gsub('Adm-clerical', 'White-Collar', adult$occupation)
+adult$occupation <- gsub('Craft-repair', 'Blue-Collar', adult$occupation)
+adult$occupation <- gsub('Exec-managerial', 'White-Collar', adult$occupation)
+adult$occupation <- gsub('Farming-fishing', 'Blue-Collar', adult$occupation)
+adult$occupation <- gsub('Handlers-cleaners', 'Blue-Collar', adult$occupation)
+adult$occupation <- gsub('Machine-op-inspct', 'Blue-Collar', adult$occupation)
+adult$occupation <- gsub('Other-service', 'Service', adult$occupation)
+adult$occupation <- gsub('Priv-house-serv', 'Service', adult$occupation)
+adult$occupation <- gsub('Prof-specialty', 'Professional', adult$occupation)
+adult$occupation <- gsub('Protective-serv', 'Service', adult$occupation)
+adult$occupation <- gsub('Tech-support', 'Service', adult$occupation)
+adult$occupation <- gsub('Transport-moving', 'Blue-Collar', adult$occupation)
+adult$occupation <- gsub('Unknown', 'Other/Unknown', adult$occupation)
+adult$occupation <- gsub('Armed-Forces', 'Other/Unknown', adult$occupation)
+adult$occupation <- as.factor(adult$occupation)
+summary(adult$occupation)
+```
+
+```{r}
+# create a dataframe
+df2 <- data.frame(table(adult$income, adult$occupation))
+names(df2) <- c('income', 'occupation', 'count')
+df2
+```
+
+```{r}
+# calculate the percentages
+df2 <- ddply(df2, .(occupation), transform, percent = count/sum(count) * 100)
+
+# format the labels and calculate their positions
+df2 <- ddply(df2, .(occupation), transform, pos = (cumsum(count) - 0.5 * count))
+df2$label <- paste0(sprintf("%.0f", df2$percent), "%")
+
+# bar plot of counts by occupation with in group proportions 
+ggplot(df2, aes(x = occupation, y = count, fill = income)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(y = pos, label = label), size = 2) + 
+  ggtitle('Income Level with Different Occupations')
+```
+
+```{r}
+adult$marital_status <- gsub('Married-AF-spouse', 'Married', adult$marital.status)
+adult$marital_status <- gsub('Married-civ-spouse', 'Married', adult$marital.status)
+adult$marital_status <- gsub('Married-spouse-absent', 'Married', adult$marital.status)
+adult$marital_status <- gsub('Never-married', 'Single', adult$marital.status)
+adult$marital_status <- as.factor(adult$marital_status)
+summary(adult$marital_status)
+
+
+```
+
+```{r}
+df3 <- data.frame(table(adult$income, adult$marital_status))
+names(df3) <- c('income', 'marital_status', 'count')
+df3
+```
+
+```{r}
+# calculate the percentages
+df3 <- ddply(df3, .(marital_status), transform, percent = count/sum(count) * 100)
+
+# format the labels and calculate their positions
+df3 <- ddply(df3, .(marital_status), transform, pos = (cumsum(count) - 0.5 * count))
+df3$label <- paste0(sprintf("%.0f", df3$percent), "%")
+
+# bar plot of counts by marital status with in group proportions 
+ggplot(df3, aes(x = marital_status, y = count, fill = income)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(y = pos, label = label), size = 2) + 
+  ggtitle('Income Level with Marital Status')
+```
+
+```{r}
+# histogram of capital_gain
+ggplot(adult) + aes(x=as.numeric(capital.gain), group=income, fill=income) + 
+  geom_histogram(bins=10, color='black') + ggtitle('Histogram of Capital Gain')
+
+```
+
+```{r}
+# histogram of capital_loss
+ggplot(adult) + aes(x=as.numeric(capital.loss), group=income, fill=income) + 
+  geom_histogram(bins=10, color='black') + ggtitle('Histogram of Capital Loss')
+```
+
+```{r}
+adult$capital.gain <- NULL
+adult$capital.loss <- NULL
+adult$native.country <- NULL
+
+```
+
+```{r}
+df4 <- data.frame(table(adult$income, adult$race))
+names(df4) <- c('income', 'race', 'count')
+df4
+```
+
+```{r}
+# calculate the percentages
+df4 <- ddply(df4, .(race), transform, percent = count/sum(count) * 100)
+
+# format the labels and calculate their positions
+df4 <- ddply(df4, .(race), transform, pos = (cumsum(count) - 0.5 * count))
+df4$label <- paste0(sprintf("%.0f", df4$percent), "%")
+
+# do not display percentage for low counts categories
+df4$label[df4$race == 'Other'] <- NA
+df4$label[df4$race == 'Amer-Indian-Eskimo'] <- NA
+
+# bar plot of counts by marital status with in group proportions 
+ggplot(df4, aes(x = race, y = count, fill = income)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(y = pos, label = label), size = 2) + 
+  ggtitle('Income Level by Race')
+```
+
+```{r}
+adult$income <- as.factor(adult$income)
+adult$marital.status <- as.factor(adult$marital.status)
+adult$race <- as.factor(adult$race)
+adult$sex <- as.factor(adult$sex)
+z <- round(.8 * dim(adult)[1])  # training set size
+training_set <- adult[1:z,]
+testing_set <- adult[-(1:z),]
+
+
+training_set <- training_set[,-c(3,4,8)]
+testing_set <- testing_set[,-c(3,4,8)]
+str(training_set)
+
+
+```
+
+```{r}
+m1 <- glm(income ~ ., data = training_set,family = binomial(link = "logit"))
+summary(m1)
+
+pred_log = predict(m1 ,testing_set,type = "response")
+class(pred_log)
+
+pred_log1 <- ifelse(pred_log>0.5,1,0)
+pred_log1 <-as.factor(pred_log1)
+x <- ifelse(testing_set$income == ">50K",1,0)
+x <- as.factor(x)
+cm_m1 <- confusionMatrix(pred_log1,x,positive = "1")
+cm_m1
+```
+#decission trees
+```{r}
+library(rpart)
+tree2 <- rpart(income ~ ., data = training_set, method = 'class', cp = 1e-3)
+tree2.pred.prob <- predict(tree2, newdata = testing_set, type = 'prob')
+tree2.pred <- predict(tree2, newdata = testing_set, type = 'class')
+# confusion matrix 
+tb2 <- table(tree2.pred, testing_set$income)
+tb2
+```
+#random forest
+```{r}
+library(randomForest)
+a <- training_set
+
+rf3 <- randomForest(income ~ ., data = a, ntree = 400,mtry = 3)
+rf3.pred.prob <- predict(rf3, newdata = testing_set, type = 'prob')
+rf3.pred <- predict(rf3, newdata = testing_set, type = 'class')
+# confusion matrix 
+tb3 <- table(rf3.pred, testing_set$income)
+tb3
+
+cm_rf  <-  confusionMatrix(rf3.pred,testing_set$income)
+cm_rf
+
+performance(rf3.pred,measure = "auc")
+```
